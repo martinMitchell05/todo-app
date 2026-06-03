@@ -1,0 +1,5 @@
+notes.md
+*.pdf
+*.zip
+/venv_app
+*.env
