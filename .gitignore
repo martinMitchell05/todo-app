@@ -1,5 +1,7 @@
 notes.md
 *.pdf
 *.zip
-/venv_app
+app_venv/
+__pycache__/
 *.env
+*.png
