@@ -1,0 +1,49 @@
+/* --- Ventana Principal y Fondos --- */
+QMainWindow {
+    background-color: #ddd5a8;
+    
+}
+
+/* 1. Estilo base para TODOS los botones (estructura brutalista) */
+QPushButton {
+    color: black;
+    font-weight: bold;
+    font-size: 14px;
+    border: 2px solid black;
+    border-radius: 8px;
+    padding: 10px;
+}
+
+/* Efecto global al presionar cualquier botón */
+QPushButton:pressed {
+    margin-top: 3px;
+    margin-left: 3px;
+}
+
+/* 2. Colores específicos según el objectName de Qt Designer */
+QPushButton#add_button {
+    background-color: #B2FA5C; /* Verde */
+}
+
+/* Efecto al pasar el mouse por el botón */
+QPushButton#add_button:hover {
+    background-color: #b4dd81;
+}
+
+QPushButton#tasks_button {
+    background-color: #5394d9;
+}
+
+QPushButton#tasks_button:hover {
+    background-color: #8dbcee;
+}
+
+QPushButton#clear_button {
+    background-color: #EF476F; /* Rojo/Rosado oscuro */
+    color: white; /* Excepción: texto blanco para que contraste */
+}
+
+QPushButton#clear_button:hover {
+    background-color: #fc8aa5; /* Rojo/Rosado oscuro */
+    color: white; /* Excepción: texto blanco para que contraste */
+}
