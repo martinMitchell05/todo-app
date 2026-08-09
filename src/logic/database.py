@@ -2,8 +2,14 @@ import sqlite3
 import os
 
 class Database:
-    def __init__(self, db_path="data/tareas.db"):
+    def __init__(self, db_path=None):
         """Inicializa la conexión y asegura que la carpeta exista."""
+        if db_path is None:
+            # Ancla la ruta a la raíz del proyecto (un nivel arriba de logic/),
+            # sin importar desde qué carpeta se ejecute python main.py.
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            db_path = os.path.join(base_dir, "data", "tareas.db")
+
         # Se asegura de crear la carpeta "data" si no existe
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
@@ -12,8 +18,18 @@ class Database:
         self.crear_tabla()
 
     def crear_tabla(self):
-        """Crea la tabla principal si es la primera vez que se ejecuta."""
+        """Crea las tablas si es la primera vez, y migra bases viejas que no tenían categorías."""
         cursor = self.conn.cursor()
+
+        # Tabla de categorías / listas (al estilo "Listas" de Microsoft To-Do)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS categorias (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL UNIQUE,
+                fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS tareas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,18 +40,69 @@ class Database:
         ''')
         self.conn.commit()
 
-    def agregar_tarea(self, descripcion : str) -> int: 
-        """Inserta una nueva tarea y devuelve su ID."""
+        # --- Migración: si la base ya existía de antes de esta feature, "tareas"
+        # no tiene la columna categoria_id todavía. PRAGMA table_info la chequea
+        # sin tirar error (a diferencia de intentar el ALTER TABLE directo dos veces).
+        cursor.execute("PRAGMA table_info(tareas)")
+        columnas_existentes = [fila[1] for fila in cursor.fetchall()]
+        if "categoria_id" not in columnas_existentes:
+            cursor.execute("ALTER TABLE tareas ADD COLUMN categoria_id INTEGER REFERENCES categorias(id)")
+            self.conn.commit()
+
+        # Categoría por defecto ("Tareas"): existe siempre, y es donde caen las
+        # tareas viejas que quedaron con categoria_id NULL tras la migración de arriba.
+        cursor.execute("SELECT id FROM categorias WHERE nombre = ?", ("Tareas",))
+        fila = cursor.fetchone()
+        if fila:
+            self.categoria_default_id = fila[0]
+        else:
+            cursor.execute("INSERT INTO categorias (nombre) VALUES (?)", ("Tareas",))
+            self.conn.commit()
+            self.categoria_default_id = cursor.lastrowid
+
+        cursor.execute("UPDATE tareas SET categoria_id = ? WHERE categoria_id IS NULL", (self.categoria_default_id,))
+        self.conn.commit()
+
+    def crear_categoria(self, nombre: str) -> int:
+        """Crea una lista/categoría nueva. Si ya existe una con ese nombre, devuelve su ID en vez de duplicarla."""
         cursor = self.conn.cursor()
-        cursor.execute('INSERT INTO tareas (descripcion) VALUES (?)', (descripcion,))
+        try:
+            cursor.execute('INSERT INTO categorias (nombre) VALUES (?)', (nombre,))
+            self.conn.commit()
+            return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            # Salta si "nombre" ya existe (columna UNIQUE) -> devolvemos la existente
+            cursor.execute('SELECT id FROM categorias WHERE nombre = ?', (nombre,))
+            return cursor.fetchone()[0]
+
+    def obtener_categorias(self) -> list:
+        """Trae todas las listas/categorías, en el orden en que se crearon."""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT id, nombre FROM categorias ORDER BY fecha_creacion ASC')
+        return cursor.fetchall()
+
+    def agregar_tarea(self, descripcion: str, categoria_id: int = None) -> int:
+        """Inserta una nueva tarea en la categoría indicada (o en 'Tareas' si no se especifica) y devuelve su ID."""
+        if categoria_id is None:
+            categoria_id = self.categoria_default_id
+        cursor = self.conn.cursor()
+        cursor.execute('INSERT INTO tareas (descripcion, categoria_id) VALUES (?, ?)', (descripcion, categoria_id))
         self.conn.commit()
         return cursor.lastrowid # Te devuelve el ID por si lo necesitás en la interfaz
 
-    def obtener_tareas(self) -> list:
-        """Trae todas las tareas de la base de datos."""
+    def obtener_tareas(self, categoria_id: int = None) -> list:
+        """
+        Trae tareas. Si categoria_id es None, trae TODAS (vista "Todas las tareas");
+        si se pasa un id puntual, filtra solo las de esa lista.
+        """
         cursor = self.conn.cursor()
-        # Por ahora traemos todo, después podemos filtrar por "completadas"
-        cursor.execute('SELECT id, descripcion, completada FROM tareas ORDER BY fecha_creacion ASC')
+        if categoria_id is None:
+            cursor.execute('SELECT id, descripcion, completada FROM tareas ORDER BY fecha_creacion ASC')
+        else:
+            cursor.execute(
+                'SELECT id, descripcion, completada FROM tareas WHERE categoria_id = ? ORDER BY fecha_creacion ASC',
+                (categoria_id,)
+            )
         return cursor.fetchall()
 
     def marcar_como_completada(self, tarea_id: int):
