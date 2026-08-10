@@ -81,6 +81,24 @@ class Database:
         cursor.execute('SELECT id, nombre FROM categorias ORDER BY fecha_creacion ASC')
         return cursor.fetchall()
 
+    def eliminar_categoria(self, categoria_id: int):
+        """
+        Elimina una lista/categoría Y todas las tareas asociadas a ella (borrado en cascada).
+        No se puede eliminar la categoría por defecto ("Tareas"): siempre tiene que
+        quedar al menos una lista donde caigan las tareas sin categorizar (ver agregar_tarea).
+        """
+        if categoria_id == self.categoria_default_id:
+            raise ValueError('No se puede eliminar la categoría por defecto ("Tareas").')
+
+        cursor = self.conn.cursor()
+        # SQLite no tiene ON DELETE CASCADE activado en esta tabla, así que el
+        # cascadeo lo hacemos a mano: primero las tareas, después la categoría.
+        # Ambos DELETE quedan en la misma transacción hasta el commit() del final,
+        # así que si algo falla en el medio, no queda la base a medio borrar.
+        cursor.execute('DELETE FROM tareas WHERE categoria_id = ?', (categoria_id,))
+        cursor.execute('DELETE FROM categorias WHERE id = ?', (categoria_id,))
+        self.conn.commit()
+
     def agregar_tarea(self, descripcion: str, categoria_id: int = None) -> int:
         """Inserta una nueva tarea en la categoría indicada (o en 'Tareas' si no se especifica) y devuelve su ID."""
         if categoria_id is None:
@@ -109,6 +127,12 @@ class Database:
         """Marca una tarea como completada."""
         cursor = self.conn.cursor()
         cursor.execute('UPDATE tareas SET completada = 1 WHERE id = ?', (tarea_id,))
+        self.conn.commit()
+
+    def desmarcar_como_completada(self, tarea_id: int):
+        """Vuelve una tarea a estado pendiente."""
+        cursor = self.conn.cursor()
+        cursor.execute('UPDATE tareas SET completada = 0 WHERE id = ?', (tarea_id,))
         self.conn.commit()
 
     def eliminar_tarea(self, tarea_id: int):

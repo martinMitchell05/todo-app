@@ -15,14 +15,18 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QButtonGroup,
     QInputDialog,
+    QMessageBox,
+    QMenu,
 )
 from logic.database import Database
+
 
 class TaskCard(QFrame):
     def __init__(self, task_id, descripcion, completada, main_window):
         super().__init__()
         self.task_id = task_id
         self.descripcion = descripcion
+        self.completada = completada  # se guarda para poder pasarlo al abrir el detalle
         self.main_window = main_window
         
         self.setObjectName("task_card")
@@ -39,11 +43,15 @@ class TaskCard(QFrame):
         desc_label.setWordWrap(True)
         desc_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
+        self.setStyleSheet("background-color: #434e8f;") # azul oscuro para pendientes
+
         if completada:
-            fuente = desc_label.font()
-            fuente.setStrikeOut(True)
-            desc_label.setFont(fuente)
-            desc_label.setStyleSheet("color: #9aa0c9;")  # sobrescribe solo el color; el resto lo hereda del QSS
+            # si esta completada, aplicar el selector del qss
+            desc_label.setProperty("completada", "true")
+
+            desc_label.style().unpolish(desc_label)
+            desc_label.style().polish(desc_label)
+            self.setStyleSheet("background-color: #81a66f;") # verde para completadas
 
         layout.addWidget(desc_label)
         layout.addStretch()  # empuja el ID hacia el pie de la tarjeta, sin importar cuánto texto tenga la descripción
@@ -57,60 +65,92 @@ class TaskCard(QFrame):
         
         self.main_window.aplicar_sombra_suave(self)
         self.setFixedSize(200, 160)
-        self.setStyleSheet("background-color: #434e8f;")
+
 
     def mousePressEvent(self, event):
-        self.main_window.abrir_detalle_tarea_card(self.task_id, self.descripcion)
+        self.main_window.abrir_detalle_tarea_card(self.task_id, self.descripcion, self.completada)
 
 class DetailWindow(QWidget):
-    def __init__(self, task_id, task_desc, db_connection, refresh_callback):
+    def __init__(self, task_id, task_desc, completada, db_connection, refresh_callback):
         super().__init__()
         self.task_id = task_id
+        self.completada = completada
         self.db = db_connection
         self.refresh_callback = refresh_callback # Función para recargar la lista principal
 
+        self.setObjectName("detail_window")
         self.setWindowTitle(f"Detalle de Tarea #{self.task_id}")
-        self.resize(400, 400)
+        self.resize(440, 340)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         # Layout principal
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(14)
 
-        # 1. Input para modificar el texto
-        self.label_desc = QLabel(f"Editar Tarea #{self.task_id}\n --- Descripción: ")
+        # --- Badge de estado: se repinta solo (ver actualizar_estado_visual) ---
+        self.estado_label = QLabel()
+        self.estado_label.setObjectName("estado_label")
+        self.estado_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.estado_label)
+
+        # --- Descripción editable ---
+        self.label_desc = QLabel(f"Tarea #{self.task_id}")
         self.label_desc.setObjectName("label_desc")
-
+        self.label_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.label_desc)
+
         self.desc_input = QLineEdit(task_desc)
         self.desc_input.setObjectName("desc_input")
         layout.addWidget(self.desc_input)
 
-        # 2. Botón para Guardar Cambios
-        self.save_button = QPushButton("Guardar Cambios")
+        self.save_button = QPushButton("💾  Guardar Cambios")
         self.save_button.setObjectName("save_button")
-        #self.save_button.setStyleSheet("background-color: #FFC107; color: black; font-weight: bold;")
-        
-        # 3. Botón para Marcar Completada
-        self.complete_button = QPushButton("Marcar como Completada")
-        self.complete_button.setObjectName("complete_button")
-        # self.complete_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
-
-        # 4. Botón para Eliminar
-        self.delete_button = QPushButton("Eliminar Tarea")
-        self.delete_button.setObjectName("delete_button")
-        # self.delete_button.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
-
-        # Agregamos los botones al layout
         layout.addWidget(self.save_button)
-        layout.addWidget(self.complete_button)
-        layout.addWidget(self.delete_button)
 
-        self.setLayout(layout)
+        layout.addStretch()  # separa la acción principal (guardar) de las secundarias de abajo
+
+        # --- Acciones secundarias, agrupadas en una fila: completar/desmarcar + eliminar ---
+        acciones_layout = QHBoxLayout()
+        acciones_layout.setSpacing(10)
+
+        self.complete_button = QPushButton()  # el texto lo pone actualizar_estado_visual()
+        self.complete_button.setObjectName("complete_button")
+        acciones_layout.addWidget(self.complete_button)
+
+        self.delete_button = QPushButton("Eliminar")
+        self.delete_button.setObjectName("delete_button")
+        acciones_layout.addWidget(self.delete_button)
+
+        layout.addLayout(acciones_layout)
+
+        self.actualizar_estado_visual()  # pinta el badge y el botón según self.completada, ANTES de mostrar la ventana
 
         # Conectamos los botones a sus funciones
         self.save_button.clicked.connect(self.guardar_cambios)
-        self.complete_button.clicked.connect(self.completar_tarea)
+        self.complete_button.clicked.connect(self.toggle_completada)
         self.delete_button.clicked.connect(self.eliminar_tarea)
+
+    def actualizar_estado_visual(self):
+        """
+        Sincroniza el badge de estado y el texto del botón con self.completada.
+        setProperty() define una "propiedad dinámica" de Qt (no existe en QLabel
+        de fábrica); estilos.qss la usa como selector: QLabel#estado_label[completada="true"].
+        Qt NO re-evalúa el QSS solo porque cambiaste una propiedad en caliente —
+        hay que "despintar y repintar" el widget con unpolish()/polish() para que
+        el estilo nuevo se aplique de una.
+        """
+        if self.completada:
+            self.estado_label.setText("✅  Completada")
+            self.estado_label.setProperty("completada", "true")
+            self.complete_button.setText("Pendiente")
+        else:
+            self.estado_label.setText("🕓  Pendiente")
+            self.estado_label.setProperty("completada", "false")
+            self.complete_button.setText("Completada")
+
+        self.estado_label.style().unpolish(self.estado_label)
+        self.estado_label.style().polish(self.estado_label)
 
     def guardar_cambios(self):
         nueva_desc = self.desc_input.text().strip()
@@ -119,10 +159,21 @@ class DetailWindow(QWidget):
             self.refresh_callback() # Le avisa a la ventana principal que actualice la lista
             self.close() # Cierra la ventana de detalle
 
-    def completar_tarea(self):
-        self.db.marcar_como_completada(self.task_id)
-        self.refresh_callback()
-        self.close()
+    def toggle_completada(self):
+        """
+        Un solo botón para las dos direcciones: si está completada la desmarca,
+        si está pendiente la marca. A diferencia de guardar_cambios/eliminar_tarea,
+        NO cierra la ventana — así podés togglear varias veces sin tener que
+        reabrir el detalle cada vez.
+        """
+        if self.completada:
+            self.db.desmarcar_como_completada(self.task_id)
+        else:
+            self.db.marcar_como_completada(self.task_id)
+
+        self.completada = not self.completada
+        self.actualizar_estado_visual()
+        self.refresh_callback()  # refresca la grilla de fondo (para ver el tachado) sin cerrar este panel
 
     def eliminar_tarea(self):
         self.db.eliminar_tarea(self.task_id)
@@ -135,8 +186,8 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         # Configuración básica de la ventana
-        self.setWindowTitle(" --- To-Do App / Personal --- ")
-        self.resize(1000, 700) # Ancho, Alto inicial
+        self.setWindowTitle(" --- To-Do App | Personal --- ")
+        self.resize(1100, 700) # Ancho, Alto inicial
         self.db = Database() # Inicializa la base de datos al iniciar la aplicación
         self.detail_window = None  # Ventana de detalle de tarea
         self.categoria_actual = None  # None = "Todas las tareas" (sin filtro de lista)
@@ -167,7 +218,7 @@ class MainWindow(QMainWindow):
         grid_layout = QGridLayout()
 
         self.task_input = QLineEdit()
-        self.task_input.setPlaceholderText("¿Qué tenés que hacer hoy?")
+        self.task_input.setPlaceholderText("Qué hay que hacer hoy?")
         self.task_input.setObjectName("task_input")
 
         self.tasks_button = QPushButton("Ver Tareas")
@@ -229,13 +280,13 @@ class MainWindow(QMainWindow):
         """
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(220)
+        sidebar.setFixedWidth(280)
 
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(0, 24, 0, 24)
         layout.setSpacing(4)
 
-        logo = QLabel("✅  ToDo App")
+        logo = QLabel(" -- To-Do App -- ")
         logo.setObjectName("logo_label")
         layout.addWidget(logo)
         layout.addSpacing(16)
@@ -326,6 +377,28 @@ class MainWindow(QMainWindow):
             self.categoria_group.addButton(boton)
             self.categorias_layout.addWidget(boton)
 
+            # Click derecho -> menú con "Eliminar lista". La categoría por defecto
+            # ("Tareas") queda afuera a propósito: no se puede borrar (ver eliminar_categoria
+            # en database.py), así que ni le mostramos la opción.
+            if categoria_id != self.db.categoria_default_id:
+                boton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                boton.customContextMenuRequested.connect(
+                    lambda punto, b=boton, cid=categoria_id, n=nombre: self.mostrar_menu_categoria(b, cid, n, punto)
+                )
+
+    def mostrar_menu_categoria(self, boton, categoria_id, nombre, punto):
+        """
+        Menú contextual (click derecho) sobre una lista del sidebar. `punto` viene
+        en coordenadas locales del botón; mapToGlobal lo convierte a coordenadas de
+        pantalla, que es lo que QMenu.exec() necesita para saber dónde dibujarse.
+        """
+        menu = QMenu(self)
+        accion_eliminar = menu.addAction("🗑️  Eliminar lista")
+        accion_elegida = menu.exec(boton.mapToGlobal(punto))
+        if accion_elegida == accion_eliminar:
+            self.eliminar_categoria_ui(categoria_id, nombre)
+        
+
     def seleccionar_categoria(self, categoria_id, nombre="Todas las tareas"):
         """Cambia la lista activa (None = Todas), actualiza el título del header y redibuja la grilla."""
         self.categoria_actual = categoria_id
@@ -349,6 +422,36 @@ class MainWindow(QMainWindow):
         self.header_title.setText(nombre)
         self.poblar_categorias()  # redibuja el sidebar con la lista nueva ya incluida
         self.obtener_tareas()     # muestra su vista (vacía, recién creada)
+
+    def eliminar_categoria_ui(self, categoria_id, nombre):
+        """
+        Confirma con el usuario y elimina una lista junto con todas sus tareas.
+        Muestra la cantidad de tareas que se van a borrar para que la confirmación
+        sea informada, no un "¿estás seguro?" genérico.
+        """
+        cantidad = len(self.db.obtener_tareas(categoria_id))
+        respuesta = QMessageBox.question(
+            self,
+            "Eliminar lista",
+            f'¿Eliminar la lista "{nombre}"? Esto borra también su{"s" if cantidad != 1 else ""} '
+            f'{cantidad} tarea{"s" if cantidad != 1 else ""} asociada{"s" if cantidad != 1 else ""}. '
+            f'Esta acción no se puede deshacer.',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,  # botón que queda seleccionado por default (Enter no borra por accidente)
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+ 
+        self.db.eliminar_categoria(categoria_id)
+ 
+        # Si estabas viendo justo la lista que borraste, volvés a "Todas las tareas"
+        if self.categoria_actual == categoria_id:
+            self.categoria_actual = None
+            self.header_title.setText("Todas las tareas")
+ 
+        self.poblar_categorias()
+        self.obtener_tareas()
+        
 
     def crear_header(self) -> QFrame:
         """
@@ -414,40 +517,84 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("!⚠ Error al agregar la tarea a la base de datos.", 5000)
 
 
-
     def obtener_tareas(self):
-        """
-        Dibuja la grilla de tarjetas aplicando los dos filtros activos a la vez:
-        la lista elegida en el sidebar (self.categoria_actual, None = todas) y el
-        toggle "Ver solo completadas" del header (self.filter_button). Reemplaza a
-        la vieja filtrar_tareas_completadas(), que duplicaba este mismo bucle.
-        """
-        self.limpiar_lista()  # evita duplicar tarjetas si se llama más de una vez
-        tareas = self.db.obtener_tareas(self.categoria_actual)
+            """
+            Dibuja la grilla separando primero las pendientes y luego las completadas.
+            Fuerza un salto de línea en la grilla para crear una división visual.
+            """
+            self.limpiar_lista()  
+            tareas = self.db.obtener_tareas(self.categoria_actual)
 
-        solo_completadas = self.filter_button.isChecked()
-        MAX_COLUMNAS = 3
-        tarjetas_mostradas = 0  # cuenta solo las que pasan el filtro, no el índice del for
+            solo_completadas = self.filter_button.isChecked()
+            MAX_COLUMNAS = 3
+            tarjetas_mostradas = 0  
 
-        for id_tarea, descripcion, completada in tareas:
-            if solo_completadas and not completada:
-                continue
+            # 1. Separar las tareas en dos listas lógicas
+            if (solo_completadas):
+                pendientes = []
+            else:
+                pendientes = [t for t in tareas if not t[2]]
 
-            tarjeta = TaskCard(id_tarea, descripcion, completada, self)
+            completadas = [t for t in tareas if t[2]]
 
-            fila = tarjetas_mostradas // MAX_COLUMNAS
-            columna = tarjetas_mostradas % MAX_COLUMNAS
-            self.tasks_grid.addWidget(tarjeta, fila, columna)
-            tarjetas_mostradas += 1
+            # 2. Dibujar tareas Pendientes primero
+            for id_tarea, descripcion, completada in pendientes:
+                tarjeta = TaskCard(id_tarea, descripcion, completada, self)
+                fila = tarjetas_mostradas // MAX_COLUMNAS
+                columna = tarjetas_mostradas % MAX_COLUMNAS
+                self.tasks_grid.addWidget(tarjeta, fila, columna)
+                tarjetas_mostradas += 1
+
+            # 3. Generar un salto visual antes de las completadas (si hay de ambas)
+            if completadas and pendientes:
+                # Si la fila actual de pendientes no está llena, adelantamos el contador 
+                # para forzar que la siguiente tarjeta arranque en la columna 0 de una fila nueva.
+                resto = tarjetas_mostradas % MAX_COLUMNAS
+                if resto != 0:
+                    tarjetas_mostradas += (MAX_COLUMNAS - resto)
+
+            # 4. Dibujar tareas Completadas al final
+            for id_tarea, descripcion, completada in completadas:
+                tarjeta = TaskCard(id_tarea, descripcion, completada, self)
+                fila = tarjetas_mostradas // MAX_COLUMNAS
+                columna = tarjetas_mostradas % MAX_COLUMNAS
+                self.tasks_grid.addWidget(tarjeta, fila, columna)
+                tarjetas_mostradas += 1
+
+    # def obtener_tareas(self):
+    #     """
+    #     Dibuja la grilla de tarjetas aplicando los dos filtros activos a la vez:
+    #     la lista elegida en el sidebar (self.categoria_actual, None = todas) y el
+    #     toggle "Ver solo completadas" del header (self.filter_button). Reemplaza a
+    #     la vieja filtrar_tareas_completadas(), que duplicaba este mismo bucle.
+    #     """
+    #     self.limpiar_lista()  # evita duplicar tarjetas si se llama más de una vez
+    #     tareas = self.db.obtener_tareas(self.categoria_actual)
+
+    #     solo_completadas = self.filter_button.isChecked()
+    #     MAX_COLUMNAS = 3
+    #     tarjetas_mostradas = 0  # cuenta solo las que pasan el filtro, no el índice del for
+
+    #     for id_tarea, descripcion, completada in tareas:
+    #         if solo_completadas and not completada:
+    #             continue
+
+    #         tarjeta = TaskCard(id_tarea, descripcion, completada, self)
+
+    #         fila = tarjetas_mostradas // MAX_COLUMNAS
+    #         columna = tarjetas_mostradas % MAX_COLUMNAS
+    #         self.tasks_grid.addWidget(tarjeta, fila, columna)
+    #         tarjetas_mostradas += 1
     
-    def abrir_detalle_tarea_card(self, id_tarea, descripcion):
-        """Abre el panel de control. Ahora recibe los datos directos en lugar de parsear un string."""
+    def abrir_detalle_tarea_card(self, id_tarea, descripcion, completada):
+        """Abre el panel de detalle. Le pasamos el estado actual para que sepa si mostrar 'Marcar' o 'Desmarcar'."""
         if self.detail_window is not None:
             self.detail_window.close()
 
         self.detail_window = DetailWindow(
             task_id=id_tarea, 
             task_desc=descripcion, 
+            completada=completada,
             db_connection=self.db, 
             refresh_callback=self.recargar_lista 
         )
