@@ -71,7 +71,7 @@ class Database:
             self.conn.commit()
             return cursor.lastrowid
         except sqlite3.IntegrityError:
-            # Salta si "nombre" ya existe (columna UNIQUE) -> devolvemos la existente
+            # Salta si "nombre" ya existe (columna UNIQUE) -> retorna la que ya existe
             cursor.execute('SELECT id FROM categorias WHERE nombre = ?', (nombre,))
             return cursor.fetchone()[0]
 
@@ -91,8 +91,6 @@ class Database:
             raise ValueError('No se puede eliminar la categoría por defecto ("Tareas").')
 
         cursor = self.conn.cursor()
-        # SQLite no tiene ON DELETE CASCADE activado en esta tabla, así que el
-        # cascadeo lo hacemos a mano: primero las tareas, después la categoría.
         # Ambos DELETE quedan en la misma transacción hasta el commit() del final,
         # así que si algo falla en el medio, no queda la base a medio borrar.
         cursor.execute('DELETE FROM tareas WHERE categoria_id = ?', (categoria_id,))

@@ -1,5 +1,5 @@
 from PyQt6.QtGui import QColor
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPointF
 from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
@@ -63,12 +63,41 @@ class TaskCard(QFrame):
 
         self.setLayout(layout)
         
-        self.main_window.aplicar_sombra_suave(self)
+        self.main_window.aplicar_sombra_dura(self)
         self.setFixedSize(200, 160)
 
 
     def mousePressEvent(self, event):
         self.main_window.abrir_detalle_tarea_card(self.task_id, self.descripcion, self.completada)
+
+    def enterEvent(self, event):
+        """Se dispara cuando el cursor entra en la tarjeta (Hover in)"""
+        efecto = self.graphicsEffect()
+        # Verificar que tenga una sombra aplicada
+        if isinstance(efecto, QGraphicsDropShadowEffect):
+            # Crear la animación apuntando a la propiedad "offset" de la sombra
+            self.anim_shadow = QPropertyAnimation(efecto, b"offset")
+            self.anim_shadow.setDuration(150)
+            self.anim_shadow.setStartValue(efecto.offset())
+            # Estirar la sombra hacia abajo y a la derecha simulando que la tarjeta sube
+            self.anim_shadow.setEndValue(QPointF(6.0, 12.0)) 
+            self.anim_shadow.setEasingCurve(QEasingCurve.Type.OutQuad) # Curva de aceleración suave
+            self.anim_shadow.start()
+            
+        super().enterEvent(event) # llamar al evento original
+
+    def leaveEvent(self, event):
+        """Se dispara cuando el cursor sale de la tarjeta (Hover out)"""
+        efecto = self.graphicsEffect()
+        if isinstance(efecto, QGraphicsDropShadowEffect):
+            self.anim_shadow = QPropertyAnimation(efecto, b"offset")
+            self.anim_shadow.setDuration(150)
+            self.anim_shadow.setStartValue(efecto.offset())
+            self.anim_shadow.setEndValue(QPointF(4.0, 6.0)) 
+            self.anim_shadow.setEasingCurve(QEasingCurve.Type.OutQuad)
+            self.anim_shadow.start()
+            
+        super().leaveEvent(event)    
 
 class DetailWindow(QWidget):
     def __init__(self, task_id, task_desc, completada, db_connection, refresh_callback):
@@ -126,7 +155,6 @@ class DetailWindow(QWidget):
 
         self.actualizar_estado_visual()  # pinta el badge y el botón según self.completada, ANTES de mostrar la ventana
 
-        # Conectamos los botones a sus funciones
         self.save_button.clicked.connect(self.guardar_cambios)
         self.complete_button.clicked.connect(self.toggle_completada)
         self.delete_button.clicked.connect(self.eliminar_tarea)
@@ -201,11 +229,11 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        # ---------- SIDEBAR (navegación) ----------
+        # ---------- Sidebar (navegación) ----------
         sidebar = self.crear_sidebar()
         root_layout.addWidget(sidebar)
 
-        # ---------- CONTENIDO (header + alta rápida + tarjetas) ----------
+        # ---------- Contenido principal  ----------
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(24, 16, 24, 16)
@@ -214,12 +242,12 @@ class MainWindow(QMainWindow):
         header = self.crear_header()
         content_layout.addWidget(header)
 
-        # --- Barra de alta rápida: input + acciones sobre las tareas ---
         grid_layout = QGridLayout()
 
         self.task_input = QLineEdit()
         self.task_input.setPlaceholderText("Qué hay que hacer hoy?")
         self.task_input.setObjectName("task_input")
+        self.aplicar_sombra_suave(self.task_input)
 
         self.tasks_button = QPushButton("Ver Tareas")
         self.tasks_button.setObjectName("tasks_button")
@@ -280,7 +308,7 @@ class MainWindow(QMainWindow):
         """
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(280)
+        sidebar.setFixedWidth(300)
 
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(0, 24, 0, 24)
@@ -310,8 +338,8 @@ class MainWindow(QMainWindow):
             self.nav_group.addButton(boton)
             layout.addWidget(boton)
 
-        # ---------- LISTAS (categorías reales, cargadas desde la base) ----------
-        layout.addSpacing(12)
+        # ---------- Listas ----------
+        layout.addSpacing(14)
 
         listas_header = QLabel("LISTAS")
         listas_header.setObjectName("sidebar_section_label")
@@ -319,9 +347,23 @@ class MainWindow(QMainWindow):
 
         # Contenedor vacío: poblar_categorias() lo llena (y lo vuelve a llenar
         # cada vez que se crea una lista nueva)
-        self.categorias_layout = QVBoxLayout()
-        self.categorias_layout.setSpacing(4)
-        layout.addLayout(self.categorias_layout)
+        
+        self.scroll_area_categorias = QScrollArea()
+        self.scroll_area_categorias.setWidgetResizable(True)
+        self.scroll_area_categorias.setObjectName("scroll_categorias")
+
+        self.categorias_container = QWidget()
+        self.categorias_container.setObjectName("categorias_container")
+
+        self.categorias_layout = QVBoxLayout(self.categorias_container)
+        self.categorias_layout.setContentsMargins(0, 0, 0, 0) # sacar márgenes para que quede alineado
+        self.categorias_layout.setSpacing(5)
+        
+        # para que las listas no se estiren y se apilen bien arriba
+        self.categorias_layout.setAlignment(Qt.AlignmentFlag.AlignTop) 
+
+        self.scroll_area_categorias.setWidget(self.categorias_container)
+        layout.addWidget(self.scroll_area_categorias)
         self.poblar_categorias()
 
         self.new_list_button = QPushButton("+  Nueva lista")
@@ -355,7 +397,7 @@ class MainWindow(QMainWindow):
         self.categoria_group = QButtonGroup(self)
         self.categoria_group.setExclusive(True)
 
-        # "Todas las tareas" no es una fila de `categorias` — es la vista sin filtro
+        # "Todas las tareas" no es una fila de 'categorias' — es la vista sin filtro
         boton_todas = QPushButton("🗂️  Todas las tareas")
         boton_todas.setObjectName("nav_button")
         boton_todas.setCheckable(True)
@@ -365,7 +407,7 @@ class MainWindow(QMainWindow):
         self.categorias_layout.addWidget(boton_todas)
 
         for categoria_id, nombre in self.db.obtener_categorias():
-            boton = QPushButton(f"📋  {nombre}")
+            boton = QPushButton(f"📑  {nombre}")
             boton.setObjectName("nav_button")
             boton.setCheckable(True)
             boton.setChecked(self.categoria_actual == categoria_id)
@@ -379,7 +421,7 @@ class MainWindow(QMainWindow):
 
             # Click derecho -> menú con "Eliminar lista". La categoría por defecto
             # ("Tareas") queda afuera a propósito: no se puede borrar (ver eliminar_categoria
-            # en database.py), así que ni le mostramos la opción.
+            # en database.py)
             if categoria_id != self.db.categoria_default_id:
                 boton.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                 boton.customContextMenuRequested.connect(
@@ -561,30 +603,6 @@ class MainWindow(QMainWindow):
                 self.tasks_grid.addWidget(tarjeta, fila, columna)
                 tarjetas_mostradas += 1
 
-    # def obtener_tareas(self):
-    #     """
-    #     Dibuja la grilla de tarjetas aplicando los dos filtros activos a la vez:
-    #     la lista elegida en el sidebar (self.categoria_actual, None = todas) y el
-    #     toggle "Ver solo completadas" del header (self.filter_button). Reemplaza a
-    #     la vieja filtrar_tareas_completadas(), que duplicaba este mismo bucle.
-    #     """
-    #     self.limpiar_lista()  # evita duplicar tarjetas si se llama más de una vez
-    #     tareas = self.db.obtener_tareas(self.categoria_actual)
-
-    #     solo_completadas = self.filter_button.isChecked()
-    #     MAX_COLUMNAS = 3
-    #     tarjetas_mostradas = 0  # cuenta solo las que pasan el filtro, no el índice del for
-
-    #     for id_tarea, descripcion, completada in tareas:
-    #         if solo_completadas and not completada:
-    #             continue
-
-    #         tarjeta = TaskCard(id_tarea, descripcion, completada, self)
-
-    #         fila = tarjetas_mostradas // MAX_COLUMNAS
-    #         columna = tarjetas_mostradas % MAX_COLUMNAS
-    #         self.tasks_grid.addWidget(tarjeta, fila, columna)
-    #         tarjetas_mostradas += 1
     
     def abrir_detalle_tarea_card(self, id_tarea, descripcion, completada):
         """Abre el panel de detalle. Le pasamos el estado actual para que sepa si mostrar 'Marcar' o 'Desmarcar'."""
@@ -606,7 +624,7 @@ class MainWindow(QMainWindow):
         sombra = QGraphicsDropShadowEffect()
         sombra.setBlurRadius(0)
         sombra.setColor(QColor(0, 0, 0, 150))
-        sombra.setOffset(3, 5)
+        sombra.setOffset(4, 6)
         widget.setGraphicsEffect(sombra)
 
     def aplicar_sombra_suave(self, widget):
@@ -619,7 +637,7 @@ class MainWindow(QMainWindow):
         sombra = QGraphicsDropShadowEffect()
         sombra.setBlurRadius(28)
         sombra.setColor(QColor(0, 0, 0, 70))  # negro con alpha bajo -> sombra tenue, no un bloque sólido
-        sombra.setOffset(2, 6)
+        sombra.setOffset(4, 8)
         widget.setGraphicsEffect(sombra)
 
 
