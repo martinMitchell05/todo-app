@@ -1,0 +1,357 @@
+/* --- Tipografía global: una sola familia de fuente para toda la app --- */
+* {
+    font-family: "Segoe UI", "Helvetica Neue", "Inter", Arial, sans-serif;
+}
+
+/* --- Ventana Principal y Fondos --- */
+QMainWindow {
+    background-color: #10242f;
+    
+}
+
+/* 1. Estilo base para TODOS los botones (estructura brutalista) */
+QPushButton {
+    color: white;
+    background-color: #4278b5;
+    font-weight: bold;
+    font-size: 14px;
+    border: 1px solid black;
+    border-radius: 8px;
+    padding: 10px;
+}
+
+/* Efecto global al presionar cualquier botón */
+QPushButton:pressed {
+    margin-top: 3px;
+    margin-left: 3px;
+}
+
+QLineEdit#task_input {
+    background-color: #b2c3d4de;
+    color: #161515;
+    font-family: "Space Mono";
+    font-size: 14px;
+    font-weight: 200;
+    text-align: center;
+    border: 1px solid grey;
+    border-radius: 14px;
+    padding: 10px;
+    margin: 4px;
+}
+
+QLineEdit#task_input:focus {
+    margin-top: 8px;
+    border: none;
+}
+
+QPushButton#tasks_button {
+    background-color: #5394d9;
+}
+
+QPushButton#tasks_button:hover {
+    background-color: #8dbcee;
+}
+
+QPushButton#clear_button {
+    background-color: #EF476F; /* Rojo/Rosado oscuro */
+    color: white; /* Excepción: texto blanco para que contraste */
+}
+
+QPushButton#clear_button:hover {
+    background-color: #fc8aa5; /* Rojo/Rosado oscuro */
+    color: white; /* Excepción: texto blanco para que contraste */
+}
+
+/* --- Ventana de 'Detail Window' --- */
+QWidget#detail_window {
+    background-color: #2c4a5a;
+}
+
+/* Badge de estado: color neutro por default, verde cuando completada="true" */
+QLabel#estado_label {
+    color: #242219;
+    background-color: #c9c9c7;
+    font-family: "Space Mono";
+    font-size: 13px;
+    font-weight: 700;
+    border-radius: 12px;
+    padding: 8px 14px;
+}
+
+QLabel#estado_label[completada="true"] {
+    color: #1c6b1f;
+    background-color: #cdeecb;
+}
+
+QLabel#label_desc {
+    color: #d7dbdc;
+    background-color: #373f48d3;
+    font-family: "Space Mono";
+    font-size: 16px;
+    font-weight: 600;
+    border-radius: 10px;
+    text-align: center;
+    margin: 5px 5px 5px 5px;
+    /*padding: 8px 5px;*/
+}
+
+QLineEdit#desc_input {
+    background-color: #5d6267be;
+    color: #d7dbdc;
+    border: 1px solid black;
+    border-radius: 10px;
+    text-align: center;
+    padding: 10px 20px;
+    margin: 5px 5px 5px 5px;
+    font-size: 14px;
+    font-weight: 300;
+    font-family: "Space Mono";    
+}
+
+QLineEdit#desc_input:focus {
+    border: 1px solid #858585;
+    font-weight: 600;
+}
+
+QPushButton#save_button {
+    background-color: #edc54a; 
+    color: white; 
+    font-weight: bold;
+    border: none;
+}
+
+QPushButton#save_button:hover {
+    background-color: #f7c42b;
+    border: 2px dashed #68686887;
+}
+
+QPushButton#complete_button {
+    background-color: #34b538; 
+    color: white; 
+    font-weight: bold;
+    border: none;
+}
+
+QPushButton#complete_button:hover {
+    background-color: #0ed615;
+    border: 2px dashed #68686887;
+}
+
+QPushButton#delete_button {
+    background-color: #c63f35; 
+    color: white; 
+    font-weight: bold;
+    border: none;
+}
+
+QPushButton#delete_button:hover {
+    background-color: #8d2f29;
+    border: 2px dashed #68686887;
+}
+
+/* --- Sidebar --- */
+QFrame#sidebar {
+    background-color: #1c1c26;
+    border-right: 3px solid black;
+}
+
+QLabel#logo_label {
+    color: white;
+    font-family: "Space Mono";
+    font-size: 18px;
+    font-weight: 800;
+    padding: 0px 20px;
+}
+
+/* Botones de navegación: planos, sin el borde negro global */
+QPushButton#nav_button {
+    background-color: transparent;
+    color: #c8cce6;
+    border: none;
+    border-radius: 8px;
+    text-align: left;
+    padding: 10px 20px;
+    margin: 2px 12px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QPushButton#nav_button:hover {
+    background-color: #2e2e42;
+    color: white;
+}
+
+QPushButton#nav_button:checked {
+    background-color: #B2FA5C;
+    color: black;
+}
+
+QPushButton#new_task_button {
+    background-color: #B2FA5C;
+    color: black;
+    border: 2px solid black;
+    border-radius: 8px;
+    padding: 12px;
+    margin: 0px 16px;
+    font-size: 14px;
+}
+
+QPushButton#new_task_button:hover {
+    background-color: #c8ffa0;
+}
+
+/* Encabezado chico de la sección "LISTAS" dentro del sidebar */
+QLabel#sidebar_section_label {
+    color: #6b6f8f;
+    font-family: "Space Mono";
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding: 8px 20px 4px 20px;
+}
+
+/* Botón "+ Nueva lista": secundario, más discreto que "+ Nueva Tarea" */
+QPushButton#new_list_button {
+    background-color: transparent;
+    font-family: "Space Mono";
+    color: #c8cce6;
+    border: 2px dashed #4a4a63;
+    border-radius: 8px;
+    padding: 8px 16px;
+    margin: 6px 16px 0px 16px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton#new_list_button:hover {
+    border-color: #B2FA5C;
+    color: white;
+}
+
+
+/* --- Fix del Fondo del Scroll de Categorías --- */
+QScrollArea#scroll_categorias {
+    background-color: transparent;
+    border: none;
+}
+
+/* El viewport interno que Qt crea automáticamente */
+QScrollArea#scroll_categorias > QWidget > QWidget {
+    background-color: transparent;
+}
+
+QWidget#categorias_container {
+    background-color: transparent;
+}
+
+/* --- ScrollBar mejorado --- */
+QScrollBar:vertical {
+    background-color: transparent;
+    width: 6px;
+    margin: 0px;
+}
+
+QScrollBar:horizontal {
+    background-color: transparent;
+    width: 6px;
+    margin: 0px;
+}
+
+/* La barrita que sube y baja (el handle) */
+QScrollBar::handle:vertical {
+    background-color: #4a4a63; 
+    min-height: 30px;
+    border-radius: 3px; 
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #4a4a63;
+    max-height: 8px;
+    min-width: 10px;
+    border-radius: 3px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #B2FA5C; 
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #B2FA5C; 
+}
+
+/* Ocultar las flechitas noventeras de los extremos */
+QScrollBar::add-line:vertical, 
+QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: none;
+    border: none;
+}
+
+QScrollBar::add-line:horizontal, 
+QScrollBar::sub-line:horizontal {
+    height: 0px;
+    background: none;
+    border: none;
+}
+
+/* Ocultar la pista por donde corre la barra */
+QScrollBar::add-page:vertical, 
+QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+QScrollBar::add-page:horizontal, 
+QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+
+
+/* --- Header del área de contenido --- */
+QFrame#header {
+    background-color: transparent;
+    border-bottom: 2px dashed #aeaeaece;
+}
+
+QLabel#header_title {
+    color: #e8e8e8;
+    font-family: "Space Mono";
+    font-size: 22px;
+    font-weight: 700;
+    border: none;
+}
+
+QPushButton#filter_button {
+    background-color: white;
+    /*padding: 8px 14px;*/
+    font-size: 13px;
+}
+
+QPushButton#filter_button:checked {
+    background-color: #5394d9;
+    color: white;
+}
+
+/* --- Tarjeta de tarea (TaskCard) --- */
+QFrame#task_card {
+    border: 2px solid black;
+    border-radius: 20px;
+}
+
+QLabel#task_desc {
+    color: white;
+    font-family: "Space Mono";
+    font-size: 14px;
+    font-weight: 400;
+}
+
+QLabel#task_desc[completada="true"] {
+    color: #242424;
+    font-style: italic;
+    font-weight: 300;
+}
+
+QLabel#task_id_label {
+    color: #181922;
+    font-size: 11px;
+    font-weight: 300;
+}
