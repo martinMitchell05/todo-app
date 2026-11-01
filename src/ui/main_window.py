@@ -1,5 +1,8 @@
 from PyQt6.QtGui import QColor
-from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPointF
+from PyQt6.QtCore import (
+    Qt, QPropertyAnimation, QEasingCurve, QPointF, QPoint,
+    QSequentialAnimationGroup, QPauseAnimation,
+)
 from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
@@ -10,6 +13,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QHBoxLayout,
     QGraphicsDropShadowEffect,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QFrame,
     QScrollArea,
@@ -17,87 +21,214 @@ from PyQt6.QtWidgets import (
     QInputDialog,
     QMessageBox,
     QMenu,
+    QSizePolicy,
 )
 from logic.database import Database
+from logic.estadisticas import barra_progreso, armar_datos_curiosos
+from ui.temas import N_COLORES, cargar_tema, guardar_tema
+from ui.dialogo_temas import DialogoTemas
+
+# --- Constantes de diseño (un solo lugar para ajustar la grilla y el "feel" de las tarjetas) ---
+MAX_COLUMNAS = 3
+CARD_ANCHO, CARD_ALTO = 220, 170
+
+# Offsets (x, y) de la sombra dura según el estado de la tarjeta. Cuanto más grande
+# el offset, más "levantada" parece; la presionada casi pega la sombra a la tarjeta.
+SOMBRA_REPOSO = QPointF(4.0, 6.0)
+SOMBRA_HOVER = QPointF(6.0, 10.0)
+SOMBRA_PRESIONADA = QPointF(1.0, 2.0)
+
+# Completar con gracia: pausa (para que se vea el tachado) + fade de salida/entrada, en ms
+PAUSA_TACHADO_MS = 140
+FADE_MS = 200
 
 
 class TaskCard(QFrame):
-    def __init__(self, task_id, descripcion, completada, main_window):
+    def __init__(self, task_id, descripcion, completada, categoria_id, main_window, entrada_animada=False):
         super().__init__()
         self.task_id = task_id
         self.descripcion = descripcion
         self.completada = completada  # se guarda para poder pasarlo al abrir el detalle
+        self.categoria_id = categoria_id  # lista a la que pertenece (para el tema por color y el menú "Mover a...")
         self.main_window = main_window
-        
+
         self.setObjectName("task_card")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(self.descripcion)  # la tarjeta es de tamaño fijo: el tooltip muestra el texto completo
 
-        # Layout interno: descripción arriba (contenido principal), ID como
-        # metadato chico abajo -> jerarquía visual en vez de todo del mismo peso
-        layout = QVBoxLayout()
-        layout.setContentsMargins(16, 14, 16, 14)
+        # Propiedades dinámicas que leen los selectores de estilos.qss / ui/temas.py.
+        # Se setean ANTES de mostrar el widget, así el primer "polish" ya las lee.
+        self.setProperty("tema", main_window.tema_actual)
+        # (id - 1): la lista por defecto ("Tareas", id 1) cae en el índice 0 = lima, el look clásico
+        self.setProperty("cat", str((categoria_id - 1) % N_COLORES))
+
+        # Layout: [ check | descripción | ⋮ ] arriba, "Tarea #N" abajo como metadato chico
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(6)
 
-        desc_label = QLabel(self.descripcion)
-        desc_label.setObjectName("task_desc")
-        desc_label.setWordWrap(True)
-        desc_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        fila_superior = QHBoxLayout()
+        fila_superior.setSpacing(10)
 
-        self.setStyleSheet("background-color: #434e8f;") # azul oscuro para pendientes
+        # Checkbox "brutalista": QPushButton checkable (se estiliza 100% por QSS, sin imágenes)
+        self.check_button = QPushButton("✓")
+        self.check_button.setObjectName("task_check")
+        self.check_button.setCheckable(True)
+        self.check_button.setChecked(completada)  # setChecked NO emite clicked, solo toggled
+        self.check_button.setFixedSize(26, 26)
+        self.check_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.check_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.check_button.clicked.connect(self._al_tildar)
+        fila_superior.addWidget(self.check_button, 0, Qt.AlignmentFlag.AlignTop)
 
-        if completada:
-            # si esta completada, aplicar el selector del qss
-            desc_label.setProperty("completada", "true")
+        self.desc_label = QLabel(self.descripcion)
+        self.desc_label.setObjectName("task_desc")
+        self.desc_label.setWordWrap(True)
+        self.desc_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        fila_superior.addWidget(self.desc_label, 1)
 
-            desc_label.style().unpolish(desc_label)
-            desc_label.style().polish(desc_label)
-            self.setStyleSheet("background-color: #81a66f;") # verde para completadas
+        # Menú contextual ⋮: aparece solo en hover (ver enterEvent/leaveEvent).
+        # retainSizeWhenHidden reserva su lugar aunque esté oculto; si no, el texto
+        # de la descripción se reacomodaría cada vez que pasás el mouse por la tarjeta.
+        self.menu_button = QPushButton("⋮")
+        self.menu_button.setObjectName("task_menu")
+        self.menu_button.setFixedSize(22, 26)
+        self.menu_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.menu_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        politica = self.menu_button.sizePolicy()
+        politica.setRetainSizeWhenHidden(True)
+        self.menu_button.setSizePolicy(politica)
+        self.menu_button.clicked.connect(lambda: self.main_window.mostrar_menu_tarea(self, self.menu_button))
+        fila_superior.addWidget(self.menu_button, 0, Qt.AlignmentFlag.AlignTop)
+        self.menu_button.setVisible(False)
 
-        layout.addWidget(desc_label)
-        layout.addStretch()  # empuja el ID hacia el pie de la tarjeta, sin importar cuánto texto tenga la descripción
+        layout.addLayout(fila_superior)
+        layout.addStretch()  # empuja el pie hacia abajo, sin importar cuánto texto tenga la descripción
 
+        # Pie de la tarjeta. A la derecha queda lugar libre para la "píldora" de
+        # fecha de vencimiento (todavía no hay columna en la DB).
         id_label = QLabel(f"Tarea #{self.task_id}")
         id_label.setObjectName("task_id_label")
         id_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(id_label)
 
-        self.setLayout(layout)
-        
-        self.main_window.aplicar_sombra_dura(self)
-        self.setFixedSize(200, 160)
+        self._aplicar_estado_visual(completada)
+        self.setFixedSize(CARD_ANCHO, CARD_ALTO)
 
+        if entrada_animada:
+            self._aparecer()  # la tarjeta que acaba de cambiar de bloque entra con un fade-in
+        else:
+            self.main_window.aplicar_sombra_dura(self)
 
-    def mousePressEvent(self, event):
-        self.main_window.abrir_detalle_tarea_card(self.task_id, self.descripcion, self.completada)
+    # ---------- Estado visual ----------
+    def _aplicar_estado_visual(self, completada, repintar=False):
+        """
+        Sincroniza la propiedad dinámica "completada" de la tarjeta y de su texto
+        (los selectores [completada="true"] del QSS hacen el resto: colores y tachado).
+        Qt NO re-evalúa el QSS solo porque cambió una propiedad en caliente: con
+        repintar=True se hace unpolish()/polish() para que se aplique de inmediato.
+        """
+        valor = "true" if completada else "false"
+        self.setProperty("completada", valor)
+        self.desc_label.setProperty("completada", valor)
+        if repintar:
+            for w in (self, self.desc_label):
+                w.style().unpolish(w)
+                w.style().polish(w)
+
+    # ---------- Completar con gracia ----------
+    def _al_tildar(self, checked):
+        """
+        Slot del checkbox (`checked` = estado NUEVO). Secuencia:
+        1) feedback inmediato: tachado/apagado al instante; 2) pausa corta para que se vea;
+        3) fade-out; 4) recién ahí se persiste y se redibuja (MainWindow.toggle_completada_card),
+        y la tarjeta reaparece en su bloque nuevo con fade-in.
+        Nota: el tachado es instantáneo, no un trazo animado (QLabel no puede animar un tachado parcial).
+        """
+        self.check_button.setEnabled(False)  # evita doble click durante la animación
+        self._aplicar_estado_visual(checked, repintar=True)
+        self.main_window.preparar_entrada_animada(self.task_id)
+
+        # QGraphicsOpacityEffect reemplaza a la sombra: Qt permite un solo efecto por widget
+        efecto = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(efecto)
+        fade = QPropertyAnimation(efecto, b"opacity")
+        fade.setDuration(FADE_MS)
+        fade.setStartValue(1.0)
+        fade.setEndValue(0.0)
+
+        # El grupo vive en self: si la tarjeta se destruye antes de terminar, la animación se va con ella
+        self.anim_salida = QSequentialAnimationGroup(self)
+        self.anim_salida.addAnimation(QPauseAnimation(PAUSA_TACHADO_MS))
+        self.anim_salida.addAnimation(fade)
+        self.anim_salida.finished.connect(lambda: self.main_window.toggle_completada_card(self.task_id, checked))
+        self.anim_salida.start()
+
+    def _aparecer(self):
+        """Fade-in de entrada; al terminar devuelve la sombra dura (que reemplaza al efecto de opacidad)."""
+        efecto = QGraphicsOpacityEffect(self)
+        efecto.setOpacity(0.0)
+        self.setGraphicsEffect(efecto)
+        self.anim_entrada = QPropertyAnimation(efecto, b"opacity", self)
+        self.anim_entrada.setDuration(FADE_MS)
+        self.anim_entrada.setStartValue(0.0)
+        self.anim_entrada.setEndValue(1.0)
+        self.anim_entrada.finished.connect(lambda: self.main_window.aplicar_sombra_dura(self))
+        self.anim_entrada.start()
+
+    # ---------- Sombra y mouse ----------
+    def _animar_sombra(self, destino: QPointF, duracion_ms: int):
+        """
+        Anima el offset de la sombra dura hasta `destino`. Simula que la tarjeta
+        "sube" o se "hunde": la geometría real la maneja el QGridLayout (mover el
+        widget a mano se pisaría en el próximo relayout), así que lo que se mueve
+        es la sombra. Necesita que la tarjeta tenga un QGraphicsDropShadowEffect
+        (lo asigna MainWindow.aplicar_sombra_dura); si no lo tiene (por ejemplo,
+        durante un fade) no hace nada.
+        """
+        efecto = self.graphicsEffect()
+        if not isinstance(efecto, QGraphicsDropShadowEffect):
+            return
+        # Se guarda en self para que Python no destruya la animación mientras corre
+        self.anim_shadow = QPropertyAnimation(efecto, b"offset")
+        self.anim_shadow.setDuration(duracion_ms)
+        self.anim_shadow.setStartValue(efecto.offset())
+        self.anim_shadow.setEndValue(destino)
+        self.anim_shadow.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.anim_shadow.start()
 
     def enterEvent(self, event):
-        """Se dispara cuando el cursor entra en la tarjeta (Hover in)"""
-        efecto = self.graphicsEffect()
-        # Verificar que tenga una sombra aplicada
-        if isinstance(efecto, QGraphicsDropShadowEffect):
-            # Crear la animación apuntando a la propiedad "offset" de la sombra
-            self.anim_shadow = QPropertyAnimation(efecto, b"offset")
-            self.anim_shadow.setDuration(150)
-            self.anim_shadow.setStartValue(efecto.offset())
-            # Estirar la sombra hacia abajo y a la derecha simulando que la tarjeta sube
-            self.anim_shadow.setEndValue(QPointF(6.0, 12.0)) 
-            self.anim_shadow.setEasingCurve(QEasingCurve.Type.OutQuad) # Curva de aceleración suave
-            self.anim_shadow.start()
-            
-        super().enterEvent(event) # llamar al evento original
+        """Hover in: la sombra crece y aparece el menú ⋮."""
+        self._animar_sombra(SOMBRA_HOVER, 150)
+        self.menu_button.setVisible(True)
+        super().enterEvent(event)
 
     def leaveEvent(self, event):
-        """Se dispara cuando el cursor sale de la tarjeta (Hover out)"""
-        efecto = self.graphicsEffect()
-        if isinstance(efecto, QGraphicsDropShadowEffect):
-            self.anim_shadow = QPropertyAnimation(efecto, b"offset")
-            self.anim_shadow.setDuration(150)
-            self.anim_shadow.setStartValue(efecto.offset())
-            self.anim_shadow.setEndValue(QPointF(4.0, 6.0)) 
-            self.anim_shadow.setEasingCurve(QEasingCurve.Type.OutQuad)
-            self.anim_shadow.start()
-            
-        super().leaveEvent(event)    
+        """Hover out: la sombra vuelve a reposo y se oculta el menú ⋮."""
+        self._animar_sombra(SOMBRA_REPOSO, 150)
+        self.menu_button.setVisible(False)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        """
+        Al presionar, la tarjeta se "hunde" (sombra casi pegada). El detalle se abre
+        recién al SOLTAR (mouseReleaseEvent), como en un botón real.
+        Ojo: acá NO se llama a super(): la implementación base de QWidget ignora el
+        evento, y un press ignorado se delega al padre -> esta tarjeta nunca
+        recibiría el release.
+        """
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._animar_sombra(SOMBRA_PRESIONADA, 60)
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        """Abre el detalle solo si el click se soltó DENTRO de la tarjeta (permite arrepentirse arrastrando afuera)."""
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
+            self._animar_sombra(SOMBRA_HOVER, 100)
+            self.main_window.abrir_detalle_tarea_card(self.task_id, self.descripcion, self.completada)
+        event.accept()
+
 
 class DetailWindow(QWidget):
     def __init__(self, task_id, task_desc, completada, db_connection, refresh_callback):
@@ -219,6 +350,11 @@ class MainWindow(QMainWindow):
         self.db = Database() # Inicializa la base de datos al iniciar la aplicación
         self.detail_window = None  # Ventana de detalle de tarea
         self.categoria_actual = None  # None = "Todas las tareas" (sin filtro de lista)
+        self.completadas_colapsadas = False  # estado del separador "-- Completadas (N) --"
+        self.tema_actual = cargar_tema()     # "clasico" | "categoria" | "pastel" (persistido con QSettings)
+        self.datos_curiosos = []             # frases del panel de progreso (las arma actualizar_stats)
+        self.indice_dato = 0                 # cuál de esas frases se muestra ahora
+        self._tarea_recien_movida = None     # id de la tarjeta que debe entrar con fade-in tras redibujar
 
         # 1. Widget central (Obligatorio en QMainWindow)
         self.central_widget = QWidget()
@@ -241,6 +377,7 @@ class MainWindow(QMainWindow):
 
         header = self.crear_header()
         content_layout.addWidget(header)
+        content_layout.addWidget(self.crear_panel_stats())
 
         grid_layout = QGridLayout()
 
@@ -269,18 +406,26 @@ class MainWindow(QMainWindow):
         self.setStatusBar(QStatusBar(self))
 
         # --- Área de scroll y matriz de tareas (tarjetas) ---
+        # El fondo/borde del scroll se define en estilos.qss (QScrollArea#scroll_tareas).
+        # Antes iba como setStyleSheet() inline SIN selector: se propagaba a todos los
+        # descendientes y anulaba el borde y el fondo de las tarjetas definidos en el QSS.
         self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("scroll_tareas")
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setStyleSheet("border: none; background-color: transparent;") # Para que no pise el fondo general
 
         # Contenedor interno donde van a ir las tarjetas
         self.tasks_container = QWidget()
+        self.tasks_container.setObjectName("tasks_container")
         self.scroll_area.setWidget(self.tasks_container)
 
         # La grilla que ordenará las tarjetas
         self.tasks_grid = QGridLayout(self.tasks_container)
         self.tasks_grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignCenter)
         self.tasks_grid.setSpacing(16)  # espacio entre tarjetas
+        # Ancho mínimo por columna = ancho de tarjeta: así el separador (que ocupa las
+        # 3 columnas) mide siempre lo mismo, haya 1 o 3 tarjetas en la fila.
+        for columna in range(MAX_COLUMNAS):
+            self.tasks_grid.setColumnMinimumWidth(columna, CARD_ANCHO)
 
         content_layout.addWidget(self.scroll_area, 1)  # stretch=1: se lleva todo el alto restante
 
@@ -515,9 +660,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(titulo)
         layout.addStretch()
 
-        self.filter_button = QPushButton("✅")
+        # Chip informativo: muestra "🕓 pendientes  ✅ completadas" de la lista actual
+        # (texto que actualiza obtener_tareas) y sigue siendo el interruptor del filtro
+        # "solo completadas".
+        self.filter_button = QPushButton("🕓 0   ✅ 0")
         self.filter_button.setObjectName("filter_button")
         self.filter_button.setCheckable(True)
+        self.filter_button.setToolTip("Pendientes y completadas de esta lista.\nClick: mostrar solo las completadas.")
+        self.filter_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.aplicar_sombra_dura(self.filter_button)
         layout.addWidget(self.filter_button)
 
@@ -528,10 +678,32 @@ class MainWindow(QMainWindow):
         Handler común para todos los botones de navegación del sidebar.
         self.sender() devuelve el QPushButton concreto que disparó la señal 'clicked';
         así no hace falta un método distinto por cada botón.
+        "Configuración" abre el diálogo de temas; el resto sigue siendo placeholder.
         """
         boton = self.sender()
-        if boton.text().strip() != "✅  Tareas":
+        if "Configuración" in boton.text():
+            self.abrir_dialogo_temas()
+            # El diálogo es un popup, no una pantalla: se des-marca el botón para que el
+            # sidebar no quede resaltado. Un QButtonGroup exclusivo no deja desmarcar,
+            # por eso se desactiva la exclusividad un instante.
+            self.nav_group.setExclusive(False)
+            boton.setChecked(False)
+            self.nav_group.setExclusive(True)
+        else:
             self.statusBar().showMessage(f"🚧 «{boton.text().strip()}» todavía no está implementado.", 4000)
+
+    def abrir_dialogo_temas(self):
+        """Abre Configuración > Temas (modal). Necesita self.tema_actual y self.aplicar_tema."""
+        DialogoTemas(self.tema_actual, self.aplicar_tema, self).exec()
+
+    def aplicar_tema(self, tema):
+        """
+        Guarda el tema elegido y redibuja la grilla: las tarjetas nuevas nacen con la
+        propiedad dinámica `tema` actualizada y los selectores de ui/temas.py hacen el resto.
+        """
+        self.tema_actual = tema
+        guardar_tema(tema)
+        self.recargar_lista()
 
     def foco_nueva_tarea(self):
         """Atajo del botón 'Nueva Tarea' del sidebar: lleva el cursor directo al input de alta."""
@@ -560,50 +732,229 @@ class MainWindow(QMainWindow):
 
 
     def obtener_tareas(self):
-            """
-            Dibuja la grilla separando primero las pendientes y luego las completadas.
-            Fuerza un salto de línea en la grilla para crear una división visual.
-            """
-            self.limpiar_lista()  
-            tareas = self.db.obtener_tareas(self.categoria_actual)
+        """
+        Dibuja la grilla: tarjetas pendientes, luego un separador colapsable
+        "-- Completadas (N) --" y debajo las completadas. Con el filtro "solo
+        completadas" activo se muestran solo estas, sin separador. Si no hay nada
+        para mostrar, dibuja el estado vacío. Además refresca el chip del header y
+        el panel de progreso.
+        Datos que necesita: self.db, self.categoria_actual, self.filter_button y
+        self.completadas_colapsadas.
+        """
+        self.limpiar_lista()
+        tareas = self.db.obtener_tareas(self.categoria_actual)
+        solo_completadas = self.filter_button.isChecked()
 
-            solo_completadas = self.filter_button.isChecked()
-            MAX_COLUMNAS = 3
-            tarjetas_mostradas = 0  
+        pendientes = [] if solo_completadas else [t for t in tareas if not t[2]]
+        completadas = [t for t in tareas if t[2]]
 
-            # 1. Separar las tareas en dos listas lógicas
-            if (solo_completadas):
-                pendientes = []
-            else:
-                pendientes = [t for t in tareas if not t[2]]
+        fila = self._agregar_tarjetas(pendientes, fila_inicial=0)
 
-            completadas = [t for t in tareas if t[2]]
+        if solo_completadas:
+            self._agregar_tarjetas(completadas, fila)
+        elif completadas:
+            separador = self._crear_separador_completadas(len(completadas))
+            self.tasks_grid.addWidget(separador, fila, 0, 1, MAX_COLUMNAS)  # ocupa las 3 columnas
+            if not self.completadas_colapsadas:
+                self._agregar_tarjetas(completadas, fila + 1)
 
-            # 2. Dibujar tareas Pendientes primero
-            for id_tarea, descripcion, completada in pendientes:
-                tarjeta = TaskCard(id_tarea, descripcion, completada, self)
-                fila = tarjetas_mostradas // MAX_COLUMNAS
-                columna = tarjetas_mostradas % MAX_COLUMNAS
-                self.tasks_grid.addWidget(tarjeta, fila, columna)
-                tarjetas_mostradas += 1
+        # Se decide con las listas, no con tasks_grid.count(): los widgets viejos recién
+        # se destruyen al volver al event loop (deleteLater) y seguirían contando.
+        if not pendientes and not completadas:
+            self.tasks_grid.addWidget(
+                self._crear_estado_vacio(solo_completadas), 0, 0, 1, MAX_COLUMNAS,
+                Qt.AlignmentFlag.AlignHCenter,
+            )
 
-            # 3. Generar un salto visual antes de las completadas (si hay de ambas)
-            if completadas and pendientes:
-                # Si la fila actual de pendientes no está llena, adelantamos el contador 
-                # para forzar que la siguiente tarjeta arranque en la columna 0 de una fila nueva.
-                resto = tarjetas_mostradas % MAX_COLUMNAS
-                if resto != 0:
-                    tarjetas_mostradas += (MAX_COLUMNAS - resto)
+        n_completadas = len(completadas)
+        self.filter_button.setText(f"🕓 {len(tareas) - n_completadas}   ✅ {n_completadas}")
+        self.actualizar_stats()
+        self._tarea_recien_movida = None  # el fade-in es de un solo uso
 
-            # 4. Dibujar tareas Completadas al final
-            for id_tarea, descripcion, completada in completadas:
-                tarjeta = TaskCard(id_tarea, descripcion, completada, self)
-                fila = tarjetas_mostradas // MAX_COLUMNAS
-                columna = tarjetas_mostradas % MAX_COLUMNAS
-                self.tasks_grid.addWidget(tarjeta, fila, columna)
-                tarjetas_mostradas += 1
+    def _agregar_tarjetas(self, tareas, fila_inicial) -> int:
+        """
+        Coloca una TaskCard por cada tupla (id, descripcion, completada) en la grilla,
+        de a MAX_COLUMNAS por fila, a partir de `fila_inicial`.
+        Cada tupla es (id, descripcion, completada, categoria_id).
+        Devuelve la próxima fila libre (techo de len(tareas) / MAX_COLUMNAS), para
+        encadenar bloques sin llevar un contador global de tarjetas.
+        """
+        for i, (id_tarea, descripcion, completada, categoria_id) in enumerate(tareas):
+            tarjeta = TaskCard(
+                id_tarea, descripcion, completada, categoria_id, self,
+                entrada_animada=(id_tarea == self._tarea_recien_movida),
+            )
+            self.tasks_grid.addWidget(tarjeta, fila_inicial + i // MAX_COLUMNAS, i % MAX_COLUMNAS)
+        return fila_inicial + (len(tareas) + MAX_COLUMNAS - 1) // MAX_COLUMNAS
 
-    
+    def _crear_separador_completadas(self, cantidad) -> QPushButton:
+        """
+        Botón-encabezado que hace de separador y de interruptor de colapso.
+        `cantidad` es solo para el texto. La flecha refleja self.completadas_colapsadas.
+        """
+        flecha = "▸" if self.completadas_colapsadas else "▾"
+        boton = QPushButton(f"{flecha}  -- Completadas ({cantidad}) --")
+        boton.setObjectName("section_toggle")
+        boton.setCursor(Qt.CursorShape.PointingHandCursor)
+        boton.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        boton.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        boton.clicked.connect(self.alternar_completadas)
+        return boton
+
+    def crear_panel_stats(self) -> QFrame:
+        """
+        Franja entre el header y el input: barra de progreso en caracteres (global, todas
+        las listas) + un "dato curioso" que rota al hacer click. Guarda `progress_label` y
+        `fact_button` porque los actualiza actualizar_stats(). No necesita datos del proyecto
+        al construirse.
+        """
+        panel = QFrame()
+        panel.setObjectName("stats_panel")
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 6)
+        layout.setSpacing(16)
+
+        self.progress_label = QLabel()
+        self.progress_label.setObjectName("progress_label")
+        layout.addWidget(self.progress_label)
+
+        self.fact_button = QPushButton()
+        self.fact_button.setObjectName("fact_button")
+        self.fact_button.setToolTip("Click para ver otro dato")
+        self.fact_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.fact_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.fact_button.clicked.connect(self.siguiente_dato)
+        layout.addWidget(self.fact_button, 1)  # stretch: se lleva el ancho sobrante
+
+        return panel
+
+    def actualizar_stats(self):
+        """
+        Recalcula barra y datos curiosos desde la base (db.obtener_estadisticas) y los muestra.
+        Conserva el dato que se estaba viendo, salvo que la lista nueva sea más corta.
+        """
+        stats = self.db.obtener_estadisticas()
+        self.progress_label.setText(barra_progreso(stats["completadas"], stats["total"]))
+        self.datos_curiosos = armar_datos_curiosos(stats)
+        self.indice_dato %= len(self.datos_curiosos)
+        self.fact_button.setText(self.datos_curiosos[self.indice_dato])
+
+    def siguiente_dato(self):
+        """Slot del click en el dato curioso: pasa al siguiente (circular)."""
+        self.indice_dato = (self.indice_dato + 1) % len(self.datos_curiosos)
+        self.fact_button.setText(self.datos_curiosos[self.indice_dato])
+
+    def _crear_estado_vacio(self, solo_completadas) -> QFrame:
+        """
+        Pantalla de "no hay nada para mostrar": un dibujo ASCII + un consejo, coherentes
+        con la tipografía monoespaciada. El texto cambia si el vacío es por el filtro
+        de completadas.
+        """
+        arte = "\n".join([
+            "  +-------------+",
+            "  |   ( o_o )   |",
+            "  |   ~ zzz ~   |",
+            "  +-------------+",
+        ])
+        if solo_completadas:
+            titulo, tip = arte, "Todavía no completaste nada en esta lista.\nTildá una tarea para verla acá."
+        else:
+            titulo, tip = arte, "Nada por hacer.\nEscribí arriba y apretá Enter, o usá «+ Nueva Tarea»."
+
+        marco = QFrame()
+        marco.setObjectName("empty_state")
+        layout = QVBoxLayout(marco)
+        layout.setContentsMargins(0, 40, 0, 0)
+        layout.setSpacing(14)
+
+        dibujo = QLabel(titulo)
+        dibujo.setObjectName("empty_art")
+        dibujo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(dibujo)
+
+        consejo = QLabel(tip)
+        consejo.setObjectName("empty_tip")
+        consejo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(consejo)
+        return marco
+
+    def mostrar_menu_tarea(self, tarjeta, boton):
+        """
+        Menú contextual ⋮ de una tarjeta: Editar / Mover a lista / Eliminar.
+        `tarjeta` aporta task_id, descripcion, completada y categoria_id; `boton` es el
+        ⋮ (solo para posicionar el menú debajo con mapToGlobal). Necesita self.db para
+        listar las categorías destino (se excluye la actual). QMenu.exec() es bloqueante
+        y devuelve la QAction elegida (también las de submenús) o None si se cancela.
+        """
+        menu = QMenu(self)
+        accion_editar = menu.addAction("✏️  Editar")
+
+        submenu = menu.addMenu("📂  Mover a lista")
+        destinos = {}  # QAction -> (categoria_id, nombre)
+        for cid, nombre in self.db.obtener_categorias():
+            if cid != tarjeta.categoria_id:
+                destinos[submenu.addAction(nombre)] = (cid, nombre)
+        submenu.setEnabled(bool(destinos))
+
+        menu.addSeparator()
+        accion_eliminar = menu.addAction("🗑️  Eliminar")
+
+        elegida = menu.exec(boton.mapToGlobal(QPoint(0, boton.height())))
+        if elegida is None:
+            return
+        if elegida == accion_editar:
+            self.abrir_detalle_tarea_card(tarjeta.task_id, tarjeta.descripcion, tarjeta.completada)
+        elif elegida == accion_eliminar:
+            self.eliminar_tarea_ui(tarjeta.task_id)
+        elif elegida in destinos:
+            self.mover_tarea_ui(tarjeta.task_id, *destinos[elegida])
+
+    def mover_tarea_ui(self, id_tarea, categoria_id, nombre_lista):
+        """Mueve la tarea a otra lista (db.mover_tarea) y redibuja; si estás viendo una lista puntual, la tarjeta sale de la vista."""
+        self.db.mover_tarea(id_tarea, categoria_id)
+        self.statusBar().showMessage(f"Tarea #{id_tarea} movida a «{nombre_lista}».", 3000)
+        self.recargar_lista()
+
+    def eliminar_tarea_ui(self, id_tarea):
+        """Elimina una tarea desde el menú ⋮, pidiendo confirmación (en el menú es fácil clickear sin querer)."""
+        respuesta = QMessageBox.question(
+            self, "Eliminar tarea", f"¿Eliminar la tarea #{id_tarea}? Esta acción no se puede deshacer.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+        self.db.eliminar_tarea(id_tarea)
+        if self.detail_window is not None and self.detail_window.task_id == id_tarea:
+            self.detail_window.close()
+        self.recargar_lista()
+
+    def preparar_entrada_animada(self, id_tarea):
+        """Marca qué tarjeta debe aparecer con fade-in en el próximo redibujado (la usa TaskCard al tildarse)."""
+        self._tarea_recien_movida = id_tarea
+
+    def alternar_completadas(self):
+        """Slot del separador: invierte el colapso y redibuja la grilla."""
+        self.completadas_colapsadas = not self.completadas_colapsadas
+        self.obtener_tareas()
+
+    def toggle_completada_card(self, id_tarea, completada):
+        """
+        Slot del checkbox de una TaskCard: persiste el nuevo estado y redibuja la grilla
+        (la tarjeta cambia de bloque: pendientes <-> completadas).
+        `completada` es el estado NUEVO. Si el panel de detalle estaba abierto sobre
+        esa misma tarea, se cierra: tendría el estado viejo y pisaría el cambio al guardar.
+        """
+        if completada:
+            self.db.marcar_como_completada(id_tarea)
+        else:
+            self.db.desmarcar_como_completada(id_tarea)
+
+        if self.detail_window is not None and self.detail_window.task_id == id_tarea:
+            self.detail_window.close()
+
+        self.recargar_lista()
+
     def abrir_detalle_tarea_card(self, id_tarea, descripcion, completada):
         """Abre el panel de detalle. Le pasamos el estado actual para que sepa si mostrar 'Marcar' o 'Desmarcar'."""
         if self.detail_window is not None:

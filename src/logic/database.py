@@ -108,18 +108,52 @@ class Database:
 
     def obtener_tareas(self, categoria_id: int = None) -> list:
         """
-        Trae tareas. Si categoria_id es None, trae TODAS (vista "Todas las tareas");
+        Trae tareas como tuplas (id, descripcion, completada, categoria_id).
+        Si categoria_id es None, trae TODAS (vista "Todas las tareas");
         si se pasa un id puntual, filtra solo las de esa lista.
         """
         cursor = self.conn.cursor()
         if categoria_id is None:
-            cursor.execute('SELECT id, descripcion, completada FROM tareas ORDER BY fecha_creacion ASC')
+            cursor.execute('SELECT id, descripcion, completada, categoria_id FROM tareas ORDER BY fecha_creacion ASC, id ASC')
         else:
             cursor.execute(
-                'SELECT id, descripcion, completada FROM tareas WHERE categoria_id = ? ORDER BY fecha_creacion ASC',
+                'SELECT id, descripcion, completada, categoria_id FROM tareas WHERE categoria_id = ? ORDER BY fecha_creacion ASC, id ASC',
                 (categoria_id,)
             )
         return cursor.fetchall()
+
+    def obtener_estadisticas(self) -> dict:
+        """
+        Resumen global para el panel de progreso, como diccionario (fácil de serializar si
+        algún día esto pasa a una API):
+            {"total": int, "completadas": int,
+             "categorias": [{"nombre": str, "total": int, "completadas": int}, ...]}
+        El LEFT JOIN hace que las listas vacías también aparezcan (con total 0);
+        COALESCE evita el NULL que devuelve SUM() cuando no hay filas.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT c.nombre, COUNT(t.id), COALESCE(SUM(t.completada), 0)
+            FROM categorias c
+            LEFT JOIN tareas t ON t.categoria_id = c.id
+            GROUP BY c.id
+            ORDER BY c.id ASC
+        ''')
+        categorias = [
+            {"nombre": nombre, "total": total, "completadas": completadas}
+            for nombre, total, completadas in cursor.fetchall()
+        ]
+        return {
+            "total": sum(c["total"] for c in categorias),
+            "completadas": sum(c["completadas"] for c in categorias),
+            "categorias": categorias,
+        }
+
+    def mover_tarea(self, tarea_id: int, categoria_id: int):
+        """Cambia una tarea de lista/categoría."""
+        cursor = self.conn.cursor()
+        cursor.execute('UPDATE tareas SET categoria_id = ? WHERE id = ?', (categoria_id, tarea_id))
+        self.conn.commit()
 
     def marcar_como_completada(self, tarea_id: int):
         """Marca una tarea como completada."""

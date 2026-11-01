@@ -26,40 +26,46 @@ QPushButton:pressed {
     margin-left: 3px;
 }
 
+/* Input principal: superficie oscura (la misma que las tarjetas) y borde lima al enfocar */
 QLineEdit#task_input {
-    background-color: #b2c3d4de;
-    color: #161515;
+    background-color: #1B3340;
+    color: #e8f0f4;
     font-family: "Space Mono";
     font-size: 14px;
-    font-weight: 200;
-    text-align: center;
-    border: 1px solid grey;
+    border: 2px solid #3d5a6a;
     border-radius: 14px;
     padding: 10px;
     margin: 4px;
+    selection-background-color: #B2FA5C;
+    selection-color: #10242f;
+    placeholder-text-color: #7f99a6;
 }
 
 QLineEdit#task_input:focus {
-    margin-top: 8px;
-    border: none;
+    border: 2px solid #B2FA5C;
 }
 
+/* Botones de la barra superior: alineados con la paleta de las tarjetas (superficie + lima) */
 QPushButton#tasks_button {
-    background-color: #5394d9;
+    background-color: #1B3340;
+    color: #B2FA5C;
+    border: 2px solid #B2FA5C;
 }
 
 QPushButton#tasks_button:hover {
-    background-color: #8dbcee;
+    background-color: #B2FA5C;
+    color: #10242f;
 }
 
 QPushButton#clear_button {
-    background-color: #EF476F; /* Rojo/Rosado oscuro */
-    color: white; /* Excepción: texto blanco para que contraste */
+    background-color: #1B3340;
+    color: #c8cce6;
+    border: 2px solid #4a4a63;
 }
 
 QPushButton#clear_button:hover {
-    background-color: #fc8aa5; /* Rojo/Rosado oscuro */
-    color: white; /* Excepción: texto blanco para que contraste */
+    border-color: #B2FA5C;
+    color: white;
 }
 
 /* --- Ventana de 'Detail Window' --- */
@@ -321,37 +327,260 @@ QLabel#header_title {
 }
 
 QPushButton#filter_button {
-    background-color: white;
-    /*padding: 8px 14px;*/
+    background-color: #1B3340;
+    border: 2px solid #3d5a6a;
     font-size: 13px;
+    padding: 8px 14px;
 }
 
 QPushButton#filter_button:checked {
-    background-color: #5394d9;
+    background-color: #B2FA5C;
+    border-color: #B2FA5C;
+}
+
+/* --- Área de scroll de tarjetas ---
+   Scopeado por selector (antes era un setStyleSheet inline sin selector en Python,
+   que se propagaba a las tarjetas y les anulaba el borde y el fondo). */
+QScrollArea#scroll_tareas {
+    background-color: transparent;
+    border: none;
+}
+
+/* El ">" limita la regla al contenedor interno; con espacio matchearía también las tarjetas */
+QScrollArea#scroll_tareas > QWidget > QWidget {
+    background-color: transparent;
+}
+
+/* Separador colapsable "-- Completadas (N) --" */
+QPushButton#section_toggle {
+    background-color: transparent;
+    color: #B2FA5C;
+    font-family: "Space Mono";
+    font-size: 13px;
+    font-weight: 700;
+    text-align: left;
+    border: none;
+    border-bottom: 2px dashed rgba(174, 174, 174, 160);
+    border-radius: 0px;
+    padding: 8px 4px;
+    margin: 12px 0px 4px 0px;
+}
+
+QPushButton#section_toggle:hover {
     color: white;
 }
 
-/* --- Tarjeta de tarea (TaskCard) --- */
+QPushButton#section_toggle:pressed {
+    margin: 12px 0px 4px 0px;  /* anula el "hundido" global de QPushButton:pressed */
+}
+
+/* --- Tarjeta de tarea (TaskCard) ---
+   Opción A del rediseño: superficie un poco más clara que el fondo + borde lima de 2px.
+   El estado se lee de la propiedad dinámica "completada" que setea TaskCard en Python. */
 QFrame#task_card {
-    border: 2px solid black;
+    background-color: #1B3340;
+    border: 2px solid #B2FA5C;
     border-radius: 20px;
 }
 
+QFrame#task_card:hover {
+    background-color: #21404f;
+}
+
+/* Completada: misma estructura pero "apagada" (no se usa QGraphicsOpacityEffect
+   porque la tarjeta ya tiene el efecto de sombra y Qt permite uno solo por widget) */
+QFrame#task_card[completada="true"] {
+    background-color: #162a35;
+    border: 2px solid #4f6b2f;
+}
+
+QFrame#task_card[completada="true"]:hover {
+    background-color: #1B3340;
+}
+
 QLabel#task_desc {
-    color: white;
+    color: #f2f7f9;
     font-family: "Space Mono";
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 400;
 }
 
 QLabel#task_desc[completada="true"] {
-    color: #242424;
+    color: #7f99a6;
     font-style: italic;
-    font-weight: 300;
+    text-decoration: line-through;
 }
 
 QLabel#task_id_label {
-    color: #181922;
+    color: #7fa3b5;
+    font-family: "Space Mono";
     font-size: 11px;
-    font-weight: 300;
+}
+
+/* Checkbox cuadrado de borde grueso. El tilde "✓" siempre está en el texto del botón,
+   pero es transparente hasta que se tilda (así no hacen falta imágenes). */
+QPushButton#task_check {
+    background-color: transparent;
+    color: transparent;
+    border: 2px solid #B2FA5C;
+    border-radius: 6px;
+    padding: 0px;
+    margin: 0px;
+    font-size: 15px;
+    font-weight: 900;
+}
+
+QPushButton#task_check:hover {
+    color: rgba(178, 250, 92, 110);  /* adelanto del tilde al pasar el mouse */
+}
+
+QPushButton#task_check:checked {
+    background-color: #B2FA5C;
+    color: #10242f;
+}
+
+QPushButton#task_check:pressed {
+    margin: 0px;  /* anula el "hundido" global de QPushButton:pressed */
+}
+
+/* Menú ⋮ de la tarjeta: texto plano, solo se ve en hover (lo controla TaskCard) */
+QPushButton#task_menu {
+    background-color: transparent;
+    color: #7fa3b5;
+    border: none;
+    padding: 0px;
+    margin: 0px;
+    font-size: 18px;
+    font-weight: 900;
+}
+
+QPushButton#task_menu:hover {
+    color: #B2FA5C;
+}
+
+QPushButton#task_menu:pressed {
+    margin: 0px;  /* anula el "hundido" global de QPushButton:pressed */
+}
+
+/* --- Panel de progreso (barra de caracteres + dato curioso) --- */
+QLabel#progress_label {
+    color: #B2FA5C;
+    font-family: "Space Mono", "DejaVu Sans Mono", "Consolas", "Menlo", "Courier New", monospace;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QPushButton#fact_button {
+    background-color: transparent;
+    color: #9fb3c0;
+    font-family: "Space Mono", "DejaVu Sans Mono", "Consolas", "Menlo", "Courier New", monospace;
+    font-size: 12px;
+    font-weight: 400;
+    text-align: left;
+    border: none;
+    padding: 4px 0px;
+    margin: 0px;
+}
+
+QPushButton#fact_button:hover {
+    color: white;
+}
+
+QPushButton#fact_button:pressed {
+    margin: 0px;
+}
+
+/* --- Estado vacío --- */
+QFrame#empty_state {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#empty_art {
+    color: #B2FA5C;
+    font-family: "Space Mono", "DejaVu Sans Mono", "Consolas", "Menlo", "Courier New", monospace;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QLabel#empty_tip {
+    color: #7f99a6;
+    font-family: "Space Mono", "DejaVu Sans Mono", "Consolas", "Menlo", "Courier New", monospace;
+    font-size: 12px;
+}
+
+/* --- Menús contextuales (tarjeta ⋮ y click derecho en listas) --- */
+QMenu {
+    background-color: #1B3340;
+    color: #e8f0f4;
+    border: 2px solid #B2FA5C;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 6px 22px;
+    border-radius: 4px;
+}
+
+QMenu::item:selected {
+    background-color: #B2FA5C;
+    color: #10242f;
+}
+
+QMenu::item:disabled {
+    color: #5d7684;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #3d5a6a;
+    margin: 4px 8px;
+}
+
+/* --- Diálogo Configuración > Temas --- */
+QDialog#dialogo_temas {
+    background-color: #2c4a5a;
+}
+
+QLabel#dialogo_titulo {
+    color: #e8e8e8;
+    font-family: "Space Mono", "DejaVu Sans Mono", "Consolas", "Menlo", "Courier New", monospace;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+QRadioButton#tema_radio {
+    color: #f2f7f9;
+    font-family: "Space Mono", "DejaVu Sans Mono", "Consolas", "Menlo", "Courier New", monospace;
+    font-size: 14px;
+    font-weight: 700;
+    spacing: 10px;
+}
+
+QRadioButton#tema_radio::indicator {
+    width: 14px;
+    height: 14px;
+    border: 2px solid #B2FA5C;
+    border-radius: 9px;
+    background-color: transparent;
+}
+
+QRadioButton#tema_radio::indicator:checked {
+    background-color: #B2FA5C;
+}
+
+QLabel#tema_desc {
+    color: #c8d6de;
+    font-size: 12px;
+    margin-left: 28px;
+}
+
+QPushButton#dialogo_cerrar {
+    background-color: #B2FA5C;
+    color: black;
+    border: 2px solid black;
+}
+
+QPushButton#dialogo_cerrar:hover {
+    background-color: #c8ffa0;
 }
